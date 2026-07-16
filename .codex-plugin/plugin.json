@@ -1,0 +1,23 @@
+{
+  "name": "subspace",
+  "version": "0.8.0-beta.3",
+  "description": "Review one Markdown file in Subspace and return its neutral invocation-bound result.",
+  "author": {
+    "name": "Spacedock"
+  },
+  "homepage": "https://github.com/spacedock-dev/subspace-beta",
+  "repository": "https://github.com/spacedock-dev/subspace-beta",
+  "license": "Apache-2.0",
+  "keywords": ["review", "markdown", "tui"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Subspace",
+    "shortDescription": "Review one Markdown file in a native TUI.",
+    "longDescription": "Open one Markdown file in Subspace and return the exact neutral Review v1 result to the invoking session.",
+    "developerName": "Spacedock",
+    "category": "Productivity",
+    "capabilities": ["Interactive"],
+    "websiteURL": "https://github.com/spacedock-dev/subspace-beta",
+    "defaultPrompt": ["Review docs/design.md with Subspace."]
+  }
+}
