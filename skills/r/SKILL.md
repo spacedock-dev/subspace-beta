@@ -24,7 +24,7 @@ brew install spacedock-dev/tap/subspace-beta
 ```
 
 Run the resolved binary with `--version`. Require stdout to be exactly
-`0.8.0-beta.5` followed by one newline and require exit status zero. For any
+`0.9.0` followed by one newline and require exit status zero. For any
 other installed version, return only this copyable remedy and stop:
 
 ```sh

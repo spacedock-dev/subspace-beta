@@ -1,7 +1,7 @@
 {
-  "version": "0.8.0-beta.5",
+  "version": "0.9.0",
   "command": "subspace:r",
   "binary": "subspace-tui",
-  "binaryVersion": "0.8.0-beta.5",
+  "binaryVersion": "0.9.0",
   "resultContract": "review-v1-result"
 }
