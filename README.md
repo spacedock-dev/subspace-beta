@@ -1,47 +1,29 @@
-# Subspace beta
+# Subspace
 
-Subspace opens one Markdown file in a native terminal review and returns a
-neutral, invocation-bound Review v1 result to the same agent session.
+Review one Markdown file without leaving your terminal.
 
-## Install and start
+Subspace opens a focused reader and keeps comments and suggested changes
+attached to exact text.
 
-Complete these steps in order.
+![A Markdown file in Subspace's focused reader](assets/review-one-file.gif)
 
-1. Install the binary with Homebrew:
+## Install and try it
 
 ```sh
 brew install spacedock-dev/tap/subspace-beta
 ```
 
-2. Choose one agent host and install its plugin.
-
-   For Claude:
-
 ```sh
-claude plugin marketplace add spacedock-dev/marketplace
-claude plugin install subspace@spacedock
+subspace-tui path/to/file.md
 ```
 
-   For Codex:
+Select text, then press <kbd>C</kbd> to comment or <kbd>s</kbd> to suggest a
+replacement. <kbd>Ctrl</kbd>+<kbd>Y</kbd> toggles the feedback pane;
+<kbd>D</kbd> switches between distraction-free and full presentation.
 
-```sh
-codex plugin marketplace add spacedock-dev/marketplace
-codex plugin add subspace@spacedock
-```
+![A comment attached to selected text in Subspace](assets/anchored-feedback.png)
 
-3. Start a new session in the selected host so the new plugin loads.
+## License
 
-4. Review a Markdown file. In Claude, run `/subspace:r docs/design.md`. In
-   Codex, run `$subspace:r docs/design.md` or select the skill from the picker.
-
-The optional transport is `auto`, `zellij`, `ghostty`, `apple-terminal`,
-`direct`, or `inline`.
-
-Subspace reports feedback and non-binding advice. The invoking workflow decides
-what to do with the result.
-
-## License scope
-
-Apache-2.0 covers only the public plugin and skill integration files in this
-repository. Subspace product source is private and is not included. The
-released subspace-tui binary is not licensed under Apache-2.0.
+The released `subspace-tui` binary is proprietary and not open source. Each
+release includes its binary notice and third-party notices.
