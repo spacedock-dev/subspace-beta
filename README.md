@@ -1,93 +1,88 @@
-# Subspace beta
+# Subspace
 
-Subspace opens one Markdown file in a native terminal review and returns a
-neutral, invocation-bound Review v1 result to the same agent session.
+Review Markdown without leaving your terminal.
 
-## Install and start
+Subspace gives Claude Code and Codex a focused reader where you can attach
+comments and suggested changes to exact text. When you finish, your decision
+and feedback return to the agent that asked for the review.
 
-Complete these steps in order.
+![A Markdown file in Subspace's focused reader](assets/review-one-file.gif)
 
-1. Install the binary with Homebrew:
+## Try it in your terminal
+
+Install the native app with Homebrew:
 
 ```sh
 brew install spacedock-dev/tap/subspace-beta
 ```
 
-2. Choose one agent host and install its plugin.
+Open any Markdown file:
 
-   For Claude:
+```sh
+subspace-tui path/to/file.md
+```
+
+Select text to leave a comment or suggest a replacement. When you are ready,
+approve the document, request revisions, or leave the review open for later.
+
+![A comment attached to selected text in Subspace](assets/anchored-feedback.png)
+
+## Use it with Claude Code or Codex
+
+The agent integration currently opens Subspace in a Zellij floating pane. It
+requires Zellij 0.44.x and `jq`, in addition to the Homebrew-installed
+`subspace-tui` binary above.
+
+Choose one agent host and install the Subspace plugin.
+
+For Claude Code:
 
 ```sh
 claude plugin marketplace add spacedock-dev/marketplace
 claude plugin install subspace@spacedock
 ```
 
-   For Codex:
+For Codex:
 
 ```sh
 codex plugin marketplace add spacedock-dev/marketplace
 codex plugin add subspace@spacedock
 ```
 
-3. Start a new session in the selected host so the new plugin loads.
+Start a new agent session so the plugin loads, then ask it to review a file:
 
-4. Review a Markdown file. In Claude, run `/subspace:r docs/design.md`. In
-   Codex, run `$subspace:r docs/design.md` or select the skill from the picker.
+```text
+# Claude Code
+/subspace:r docs/design.md
 
-The candidate skill accepts only Zellij: pass no terminal argument, or append
-`zellij` explicitly. It opens one blocking float in the caller's exact tab and
-requires Zellij 0.44.x, `jq`, and exact local candidate `0.10.0-beta.1`.
+# Codex
+$subspace:r docs/design.md
+```
 
-Subspace reports feedback and non-binding advice. The invoking workflow decides
-what to do with the result.
+Subspace opens the file in the terminal. Your comments, suggestions, and final
+decision return to the same agent session when you submit the review.
 
-## Troubleshoot the binary
+## Troubleshooting
 
-The plugin requires `subspace-tui` version `0.10.0-beta.1`. If the binary is
-missing, run:
+The current plugin requires `subspace-tui` version `0.10.0-beta.1`.
+
+If the binary is missing:
 
 ```sh
 brew install spacedock-dev/tap/subspace-beta
 ```
 
-If the binary is present but reports another version or invalid version output,
-run:
+If an older version is installed:
 
 ```sh
 brew upgrade spacedock-dev/tap/subspace-beta
 ```
 
-If `brew` is unavailable, install Homebrew from `https://brew.sh`, then run the
-appropriate command above and retry. The plugin only reports these remedies; it
-never installs or upgrades the binary.
+If Homebrew is not installed, follow the instructions at
+[brew.sh](https://brew.sh), then retry the appropriate command above.
 
-## Dogfood this checkout
+## License
 
-Both local marketplaces resolve this canonical candidate plugin tree. Build the
-matching exact-tip binary with the private validation skill, install from the
-repository root, and start a new host session before testing discovery or
-invocation:
-
-```sh
-# Codex: install and refresh same-version local source bytes
-codex plugin marketplace add .
-codex plugin add subspace@subspace-local
-
-# Claude: initial install
-claude plugin marketplace add ./ --scope local
-claude plugin install subspace@subspace-local --scope local
-
-# Claude: refresh same-version local source bytes
-claude plugin uninstall subspace@subspace-local --scope local
-claude plugin install subspace@subspace-local --scope local
-```
-
-An already-running session keeps its existing skill catalog. Claude's
-`--plugin-dir ./plugins/subspace` is useful while editing, but it does not
-replace the marketplace reinstall and fresh-session acceptance path.
-
-## License scope
-
-Apache-2.0 covers only the public plugin and skill integration files in this
-repository. Subspace product source is private and is not included. The
-released subspace-tui binary is not licensed under Apache-2.0.
+Apache-2.0 covers the public plugin and skill integration files in this
+repository. The released `subspace-tui` binary is proprietary, and its source
+code is not included.
