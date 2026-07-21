@@ -1,29 +1,93 @@
-# Subspace
+# Subspace beta
 
-Review one Markdown file without leaving your terminal.
+Subspace opens one Markdown file in a native terminal review and returns a
+neutral, invocation-bound Review v1 result to the same agent session.
 
-Subspace opens a focused reader and keeps comments and suggested changes
-attached to exact text.
+## Install and start
 
-![A Markdown file in Subspace's focused reader](assets/review-one-file.gif)
+Complete these steps in order.
 
-## Install and try it
+1. Install the binary with Homebrew:
 
 ```sh
 brew install spacedock-dev/tap/subspace-beta
 ```
 
+2. Choose one agent host and install its plugin.
+
+   For Claude:
+
 ```sh
-subspace-tui path/to/file.md
+claude plugin marketplace add spacedock-dev/marketplace
+claude plugin install subspace@spacedock
 ```
 
-Select text, then press <kbd>C</kbd> to comment or <kbd>s</kbd> to suggest a
-replacement. <kbd>Ctrl</kbd>+<kbd>Y</kbd> toggles the feedback pane;
-<kbd>D</kbd> switches between distraction-free and full presentation.
+   For Codex:
 
-![A comment attached to selected text in Subspace](assets/anchored-feedback.png)
+```sh
+codex plugin marketplace add spacedock-dev/marketplace
+codex plugin add subspace@spacedock
+```
 
-## License
+3. Start a new session in the selected host so the new plugin loads.
 
-The released `subspace-tui` binary is proprietary and not open source. Each
-release includes its binary notice and third-party notices.
+4. Review a Markdown file. In Claude, run `/subspace:r docs/design.md`. In
+   Codex, run `$subspace:r docs/design.md` or select the skill from the picker.
+
+The candidate skill accepts only Zellij: pass no terminal argument, or append
+`zellij` explicitly. It opens one blocking float in the caller's exact tab and
+requires Zellij 0.44.x, `jq`, and exact local candidate `0.10.0-beta.1`.
+
+Subspace reports feedback and non-binding advice. The invoking workflow decides
+what to do with the result.
+
+## Troubleshoot the binary
+
+The plugin requires `subspace-tui` version `0.10.0-beta.1`. If the binary is
+missing, run:
+
+```sh
+brew install spacedock-dev/tap/subspace-beta
+```
+
+If the binary is present but reports another version or invalid version output,
+run:
+
+```sh
+brew upgrade spacedock-dev/tap/subspace-beta
+```
+
+If `brew` is unavailable, install Homebrew from `https://brew.sh`, then run the
+appropriate command above and retry. The plugin only reports these remedies; it
+never installs or upgrades the binary.
+
+## Dogfood this checkout
+
+Both local marketplaces resolve this canonical candidate plugin tree. Build the
+matching exact-tip binary with the private validation skill, install from the
+repository root, and start a new host session before testing discovery or
+invocation:
+
+```sh
+# Codex: install and refresh same-version local source bytes
+codex plugin marketplace add .
+codex plugin add subspace@subspace-local
+
+# Claude: initial install
+claude plugin marketplace add ./ --scope local
+claude plugin install subspace@subspace-local --scope local
+
+# Claude: refresh same-version local source bytes
+claude plugin uninstall subspace@subspace-local --scope local
+claude plugin install subspace@subspace-local --scope local
+```
+
+An already-running session keeps its existing skill catalog. Claude's
+`--plugin-dir ./plugins/subspace` is useful while editing, but it does not
+replace the marketplace reinstall and fresh-session acceptance path.
+
+## License scope
+
+Apache-2.0 covers only the public plugin and skill integration files in this
+repository. Subspace product source is private and is not included. The
+released subspace-tui binary is not licensed under Apache-2.0.
