@@ -29,9 +29,9 @@ approve the document, request revisions, or leave the review open for later.
 
 ## Use it with Claude Code or Codex
 
-The agent integration currently opens Subspace in a Zellij floating pane. It
-requires Zellij 0.44.x and `jq`, in addition to the Homebrew-installed
-`subspace-tui` binary above.
+The agent integration supports [Zellij](https://zellij.dev/) 0.44.x as its
+terminal multiplexer and opens Subspace in a floating pane. It also requires
+`jq` and the Homebrew-installed `subspace-tui` binary above.
 
 Choose one agent host and install the Subspace plugin.
 
