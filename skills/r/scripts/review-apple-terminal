@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+transport_name=apple-terminal
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck source=transport-common
+source "$script_dir/transport-common"
+
+[[ $(uname -s) == Darwin ]] || transport_preflight_fail 'Apple Terminal requires macOS'
+app=/System/Applications/Utilities/Terminal.app
+[[ -d $app ]] || transport_preflight_fail "Apple Terminal is unavailable at $app"
+[[ -x /usr/bin/osascript ]] || transport_preflight_fail '/usr/bin/osascript is unavailable'
+[[ -x /usr/bin/plutil ]] || transport_preflight_fail '/usr/bin/plutil is unavailable'
+bundle=$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$app/Contents/Info.plist") || \
+  transport_preflight_fail 'could not read the Apple Terminal bundle identity'
+[[ $bundle == com.apple.Terminal ]] || \
+  transport_preflight_fail "Apple Terminal bundle id is $bundle, expected com.apple.Terminal"
+
+apple_script='on run argv
+  set commandLine to "exec"
+  repeat with argumentValue in argv
+    set commandLine to commandLine & " " & quoted form of (argumentValue as text)
+  end repeat
+  tell application id "com.apple.Terminal"
+    set reviewTab to do script commandLine
+    activate
+    return reviewTab
+  end tell
+end run'
+
+transport_mark_dispatched
+set +e
+launch_output=$(/usr/bin/osascript -e "$apple_script" -- "$transport_capsule" 2>&1)
+launch_status=$?
+set -e
+if [[ $launch_status != 0 ]]; then
+  if [[ $launch_output == *-1743* ]]; then
+    transport_preserve_fail 'Apple Terminal Automation permission is required (-1743)' "$launch_status"
+  fi
+  transport_preserve_fail "Apple Terminal launch failed: $launch_output" "$launch_status"
+fi
+
+transport_receive
+transport_deliver

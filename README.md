@@ -29,9 +29,12 @@ approve the document, request revisions, or leave the review open for later.
 
 ## Use it with Claude Code or Codex
 
-The agent integration supports [Zellij](https://zellij.dev/) 0.44.x as its
-terminal multiplexer and opens Subspace in a floating pane. It also requires
-`jq` and the Homebrew-installed `subspace-tui` binary above.
+The agent integration supports [Zellij](https://zellij.dev/) 0.44.x,
+[tmux](https://github.com/tmux/tmux/wiki) 3.2 or newer,
+[Herdr](https://herdr.org/) 0.6.5,
+[CMUX](https://cmux.com/) 0.64.20 build 100, Ghostty 1.2 or newer on macOS,
+and the system Apple Terminal. It also requires `jq` and the Homebrew-installed
+`subspace-tui` binary above.
 
 Choose one agent host and install the Subspace plugin.
 
@@ -59,12 +62,15 @@ Start a new agent session so the plugin loads, then ask it to review a file:
 $subspace:r docs/design.md
 ```
 
+Pass a terminal explicitly, such as `$subspace:r docs/design.md tmux`, or omit
+it to detect the current supported terminal.
+
 Subspace opens the file in the terminal. Your comments, suggestions, and final
 decision return to the same agent session when you submit the review.
 
 ## Troubleshooting
 
-The current plugin requires `subspace-tui` version `0.10.0-beta.1`.
+The current plugin requires `subspace-tui` version `0.10.0-beta.2`.
 
 If the binary is missing:
 

@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+
+# Sourced by the four asynchronous terminal helpers. This file deliberately
+# contains no terminal selection or host commands.
+
+transport_usage() {
+  printf 'usage: review-%s <absolute-file.md> <absolute-private-result.json> <validated-absolute-subspace-tui>\n' \
+    "$transport_name" >&2
+  exit 2
+}
+
+[[ $# == 3 ]] || transport_usage
+transport_artifact=$1
+transport_result=$2
+transport_tui=$3
+transport_result_dir=${transport_result%/*}
+transport_artifact_dir=${transport_artifact%/*}
+[[ -n $transport_artifact_dir ]] || transport_artifact_dir=/
+transport_fifo=$transport_result_dir/transport-status.fifo
+transport_capsule=$transport_result_dir/transport-child
+transport_created=0
+transport_dispatched=0
+transport_residue=
+
+transport_path_mode() {
+  local mode
+  if mode=$(stat -f '%Lp' "$1" 2>/dev/null); then
+    printf '%s\n' "$mode"
+    return 0
+  fi
+  stat -c '%a' "$1" 2>/dev/null
+}
+
+transport_clean_empty() {
+  [[ $transport_created == 1 ]] && rm -f -- "$transport_fifo" "$transport_capsule"
+  [[ ! -e $transport_result ]] && rmdir -- "$transport_result_dir" 2>/dev/null || true
+}
+
+transport_preflight_fail() {
+  transport_clean_empty
+  printf 'review-%s: %s\n' "$transport_name" "$1" >&2
+  exit "${2:-2}"
+}
+
+transport_interrupted() {
+  if [[ $transport_dispatched == 0 ]]; then
+    transport_clean_empty
+  else
+    printf 'review-%s: interrupted; recoverable scratch: %s%s\n' \
+      "$transport_name" "$transport_result_dir" "$transport_residue" >&2
+  fi
+  exit 130
+}
+
+[[ $transport_artifact == /* && $transport_result == /* && $transport_tui == /* ]] || \
+  transport_preflight_fail 'all paths must be absolute'
+[[ -f $transport_artifact && ! -L $transport_artifact && -r $transport_artifact ]] || \
+  transport_preflight_fail "Artifact is not a readable regular file: $transport_artifact"
+[[ -d $transport_artifact_dir && -x $transport_artifact_dir ]] || \
+  transport_preflight_fail "Artifact parent is not searchable: $transport_artifact_dir"
+[[ -d $transport_result_dir && ! -L $transport_result_dir ]] || \
+  transport_preflight_fail "private result directory is unavailable: $transport_result_dir"
+[[ $(transport_path_mode "$transport_result_dir" || true) == 700 ]] || \
+  transport_preflight_fail "private result directory must be mode 0700: $transport_result_dir"
+[[ ! -e $transport_result && ! -L $transport_result ]] || \
+  transport_preflight_fail "result path already exists: $transport_result"
+[[ -f $transport_tui && ! -L $transport_tui && -x $transport_tui ]] || \
+  transport_preflight_fail "validated subspace-tui is not an executable regular file: $transport_tui"
+[[ ! -e $transport_fifo && ! -L $transport_fifo && ! -e $transport_capsule && ! -L $transport_capsule ]] || \
+  transport_preflight_fail 'transport scratch path already exists'
+
+umask 077
+mkfifo "$transport_fifo" || transport_preflight_fail 'could not create completion FIFO'
+transport_created=1
+chmod 600 "$transport_fifo" || transport_preflight_fail 'could not make completion FIFO private'
+{
+  printf '#!/usr/bin/env bash\nset +e\numask 077\ntransport_report_status() {\n  child_status=$1\n  trap - EXIT HUP INT TERM\n  printf '\''%%s\\n'\'' "$child_status" > %q\n  exit "$child_status"\n}\ntrap '\''transport_report_status $?'\'' EXIT\ntrap '\''transport_report_status 129'\'' HUP\ntrap '\''transport_report_status 130'\'' INT\ntrap '\''transport_report_status 143'\'' TERM\ncd -- %q\nchild_status=$?\nif [[ $child_status == 0 ]]; then\n' \
+    "$transport_fifo" "$transport_artifact_dir"
+  printf '  %q ' "$transport_tui" --advisory --actor person:reviewer \
+    --approver agent:invoking-session --result "$transport_result" "$transport_artifact"
+  printf '\n  child_status=$?\nfi\nexit "$child_status"\n'
+} > "$transport_capsule" || transport_preflight_fail 'could not create child capsule'
+chmod 700 "$transport_capsule" || transport_preflight_fail 'could not make child capsule private'
+trap transport_interrupted HUP INT TERM
+
+transport_mark_dispatched() {
+  transport_dispatched=1
+  transport_residue=${1:-}
+}
+
+transport_preserve_fail() {
+  printf 'review-%s: %s; recoverable scratch: %s%s\n' \
+    "$transport_name" "$1" "$transport_result_dir" "$transport_residue" >&2
+  exit "${2:-1}"
+}
+
+transport_receive() {
+  local child_status
+  IFS= read -r child_status < "$transport_fifo" || \
+    transport_preserve_fail 'completion FIFO closed without a status'
+  [[ $child_status =~ ^[0-9]+$ && $child_status -le 255 ]] || \
+    transport_preserve_fail 'completion status is malformed'
+  [[ $child_status == 0 ]] || transport_preserve_fail "Subspace exited with status $child_status" "$child_status"
+  [[ -f $transport_result && ! -L $transport_result && -s $transport_result ]] || \
+    transport_preserve_fail 'terminal returned no regular result'
+  [[ $(transport_path_mode "$transport_result" || true) == 600 ]] || \
+    transport_preserve_fail 'terminal result is not mode 0600'
+}
+
+transport_deliver() {
+  local delivery_status
+  set +e
+  cat -- "$transport_result"
+  delivery_status=$?
+  set -e
+  [[ $delivery_status == 0 ]] || transport_preserve_fail 'result delivery failed' "$delivery_status"
+  rm -f -- "$transport_fifo" "$transport_capsule" || \
+    transport_preserve_fail 'successful result delivery could not remove transport files'
+  trap - HUP INT TERM
+}

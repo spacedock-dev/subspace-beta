@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+transport_name=herdr
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck source=transport-common
+source "$script_dir/transport-common"
+
+[[ ${HERDR_ENV:-} == 1 ]] || transport_preflight_fail 'HERDR_ENV=1 is required'
+caller_handle=${HERDR_PANE_ID:-}
+[[ -n $caller_handle ]] || transport_preflight_fail 'HERDR_PANE_ID is required'
+herdr_bin=${SUBSPACE_HERDR_BIN:-herdr}
+if [[ $herdr_bin != */* ]]; then
+  herdr_bin=$(command -v -- "$herdr_bin") || transport_preflight_fail 'Herdr is not installed' 127
+fi
+[[ -x $herdr_bin && ! -d $herdr_bin ]] || transport_preflight_fail "Herdr is not executable: $herdr_bin"
+jq_bin=$(command -v jq) || transport_preflight_fail 'jq is required to validate Herdr identities' 127
+version=$("$herdr_bin" --version) || transport_preflight_fail 'could not read the Herdr version'
+[[ $version == 'herdr 0.6.5' ]] || transport_preflight_fail "Herdr 0.6.5 is required; found $version"
+
+caller_record=$("$herdr_bin" pane get "$caller_handle") || transport_preflight_fail 'could not resolve the caller pane'
+caller=$("$jq_bin" -er '.result.pane.pane_id | select(type == "string" and length > 0)' <<< "$caller_record") || \
+  transport_preflight_fail 'caller pane did not resolve to one public identity'
+
+transport_mark_dispatched
+set +e
+split_record=$("$herdr_bin" pane split "$caller" --direction right \
+  --cwd "$transport_artifact_dir" --no-focus)
+split_status=$?
+set -e
+[[ $split_status == 0 ]] || transport_preserve_fail 'right split creation failed' "$split_status"
+owned=$("$jq_bin" -er '.result.pane.pane_id | select(type == "string" and length > 0)' <<< "$split_record") || \
+  transport_preserve_fail 'split creation returned no pane identity'
+[[ $owned != "$caller" ]] || transport_preserve_fail 'split creation returned the caller pane'
+transport_residue="; possible pane: $owned"
+
+printf -v capsule_command 'exec %q' "$transport_capsule"
+"$herdr_bin" pane run "$owned" "$capsule_command" >/dev/null || \
+  transport_preserve_fail 'command submission failed'
+
+transport_receive
+transport_deliver
