@@ -1,33 +1,32 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-transport_name=ghostty
+invocation_name=ghostty
+invocation_async=1
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-# shellcheck source=transport-common
-source "$script_dir/transport-common"
+# shellcheck source=invocation-common
+source "$script_dir/invocation-common"
 
-[[ $(uname -s) == Darwin ]] || transport_preflight_fail 'Ghostty requires macOS'
-app=${SUBSPACE_GHOSTTY_APP:-/Applications/Ghostty.app}
-[[ $app == /* ]] || transport_preflight_fail "Ghostty app path must be absolute: $app"
-[[ -d $app ]] || transport_preflight_fail "Ghostty is unavailable at $app"
-[[ -x /usr/bin/open ]] || transport_preflight_fail '/usr/bin/open is unavailable'
-[[ -x /usr/bin/plutil ]] || transport_preflight_fail '/usr/bin/plutil is unavailable'
-plist=$app/Contents/Info.plist
-bundle=$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$plist") || \
-  transport_preflight_fail 'could not read the Ghostty bundle identity'
-[[ $bundle == com.mitchellh.ghostty ]] || \
-  transport_preflight_fail "Ghostty bundle id is $bundle, expected com.mitchellh.ghostty"
-version=$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$plist") || \
-  transport_preflight_fail 'could not read the Ghostty version'
-[[ $version =~ ^([0-9]+)\.([0-9]+)(\.|$) ]] || transport_preflight_fail "cannot parse Ghostty version: $version"
-major=${BASH_REMATCH[1]}
-minor=${BASH_REMATCH[2]}
-(( major > 1 || (major == 1 && minor >= 2) )) || \
-  transport_preflight_fail "Ghostty 1.2 or newer is required; found $version"
+invocation_host_preflight() {
+  [[ $(uname -s) == Darwin ]] || invocation_preflight_fail 'Ghostty requires macOS'
+  app=${SUBSPACE_GHOSTTY_APP:-/Applications/Ghostty.app}
+  [[ $app == /* ]] || invocation_preflight_fail "Ghostty app path must be absolute: $app"
+  [[ -d $app ]] || invocation_preflight_fail "Ghostty is unavailable at $app"
+  [[ -x /usr/bin/open ]] || invocation_preflight_fail '/usr/bin/open is unavailable'
+  [[ -x /usr/bin/plutil ]] || invocation_preflight_fail '/usr/bin/plutil is unavailable'
+  local plist bundle status
+  plist=$app/Contents/Info.plist
+  bundle=$(/usr/bin/plutil -extract CFBundleIdentifier raw -o - "$plist" 2>/dev/null) || {
+    status=$?
+    invocation_preflight_fail "operation read bundle identity failed with status $status" "$status"
+  }
+  [[ $bundle == com.mitchellh.ghostty ]] || \
+    invocation_preflight_fail "Ghostty bundle id is $bundle, expected com.mitchellh.ghostty"
+}
 
-transport_mark_dispatched
-/usr/bin/open -n -a "$app" --args -e "$transport_capsule" || \
-  transport_preserve_fail 'Ghostty launch was not accepted'
+invocation_host_dispatch() {
+  invocation_residue='; operation: open'
+  /usr/bin/open -n -a "$app" --args -e "$invocation_capsule" >/dev/null 2>/dev/null
+}
 
-transport_receive
-transport_deliver
+invocation_main "$@"

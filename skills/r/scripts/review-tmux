@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+invocation_name=tmux
+invocation_async=0
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck source=invocation-common
+source "$script_dir/invocation-common"
+
+invocation_host_preflight() {
+  [[ -n ${TMUX:-} ]] || invocation_preflight_fail 'TMUX is required'
+  [[ -n ${TMUX_PANE:-} ]] || invocation_preflight_fail 'TMUX_PANE is required'
+  tmux_bin=${SUBSPACE_TMUX_BIN:-tmux}
+  if [[ $tmux_bin != */* ]]; then
+    tmux_bin=$(command -v -- "$tmux_bin") || invocation_preflight_fail 'tmux is not installed' 127
+  fi
+  [[ -x $tmux_bin && ! -d $tmux_bin ]] || invocation_preflight_fail "tmux is not executable: $tmux_bin"
+  local pane_count client_count status
+  pane_count=$("$tmux_bin" list-panes -a -F '#{pane_id} #{pane_dead}' 2>/dev/null | \
+    awk -v pane="$TMUX_PANE" '$1 == pane && $2 == 0 {count++} END {print count+0}') || {
+    status=$?
+    invocation_preflight_fail "operation list-panes failed with status $status" "$status"
+  }
+  [[ $pane_count == 1 ]] || invocation_preflight_fail 'TMUX_PANE is not uniquely live'
+  client_count=$("$tmux_bin" list-clients -F '#{client_name}' 2>/dev/null | awk 'NF {count++} END {print count+0}') || {
+    status=$?
+    invocation_preflight_fail "operation list-clients failed with status $status" "$status"
+  }
+  [[ $client_count == 1 ]] || invocation_preflight_fail 'exactly one attached tmux client is required'
+}
+
+invocation_host_dispatch() {
+  local command
+  printf -v command '%q ' "$invocation_tui" --actor person:reviewer \
+    --result "$invocation_result" "$invocation_artifact"
+  command=${command% }
+  invocation_residue='; operation: display-popup'
+  "$tmux_bin" display-popup -E -t "$TMUX_PANE" -d "$invocation_artifact_dir" "$command" \
+    >/dev/null 2>/dev/null
+}
+
+invocation_main "$@"

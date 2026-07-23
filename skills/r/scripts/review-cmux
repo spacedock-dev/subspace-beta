@@ -1,51 +1,58 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-transport_name=cmux
+invocation_name=cmux
+invocation_async=1
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-# shellcheck source=transport-common
-source "$script_dir/transport-common"
+# shellcheck source=invocation-common
+source "$script_dir/invocation-common"
 
-cmux_bin=${SUBSPACE_CMUX_BIN:-cmux}
-if [[ $cmux_bin != */* ]]; then
-  cmux_bin=$(command -v -- "$cmux_bin") || transport_preflight_fail 'CMUX is not installed' 127
-fi
-[[ -x $cmux_bin && ! -d $cmux_bin ]] || transport_preflight_fail "CMUX is not executable: $cmux_bin"
-jq_bin=$(command -v jq) || transport_preflight_fail 'jq is required to validate CMUX identities' 127
-version=$({ "$cmux_bin" --version; status=$?; printf '\034'; exit "$status"; }) || \
-  transport_preflight_fail 'could not read the CMUX version'
-version=${version%$'\034'}
-[[ $version == *$'\n' ]] || transport_preflight_fail "malformed CMUX version output: $version"
-version=${version%$'\n'}
-[[ $version =~ ^cmux\ 0\.64\.20\ \(100\)\ \[[0-9a-f]+\]$ ]] || \
-  transport_preflight_fail "CMUX 0.64.20 build 100 is required; found $version"
-identify=$("$cmux_bin" identify --json) || transport_preflight_fail 'could not identify the CMUX caller'
-workspace=$("$jq_bin" -er '.caller.workspace_ref | select(type == "string" and length > 0)' <<< "$identify") || \
-  transport_preflight_fail 'CMUX caller has no workspace identity'
-caller_pane=$("$jq_bin" -er '.caller.pane_ref | select(type == "string" and length > 0)' <<< "$identify") || \
-  transport_preflight_fail 'CMUX caller has no pane identity'
-caller_surface=$("$jq_bin" -er '.caller.surface_ref | select(type == "string" and length > 0)' <<< "$identify") || \
-  transport_preflight_fail 'CMUX caller has no surface identity'
+invocation_host_preflight() {
+  cmux_bin=${SUBSPACE_CMUX_BIN:-cmux}
+  if [[ $cmux_bin != */* ]]; then
+    cmux_bin=$(command -v -- "$cmux_bin") || invocation_preflight_fail 'CMUX is not installed' 127
+  fi
+  [[ -x $cmux_bin && ! -d $cmux_bin ]] || invocation_preflight_fail "CMUX is not executable: $cmux_bin"
+  jq_bin=$(command -v jq) || invocation_preflight_fail 'jq is required to validate CMUX identities' 127
+  local identify status
+  identify=$("$cmux_bin" identify --json 2>/dev/null) || {
+    status=$?
+    invocation_preflight_fail "operation identify failed with status $status" "$status"
+  }
+  workspace=$("$jq_bin" -er '.caller.workspace_ref | select(type == "string" and length > 0)' <<< "$identify") || \
+    invocation_preflight_fail 'CMUX caller has no workspace identity'
+  caller_pane=$("$jq_bin" -er '.caller.pane_ref | select(type == "string" and length > 0)' <<< "$identify") || \
+    invocation_preflight_fail 'CMUX caller has no pane identity'
+  caller_surface=$("$jq_bin" -er '.caller.surface_ref | select(type == "string" and length > 0)' <<< "$identify") || \
+    invocation_preflight_fail 'CMUX caller has no surface identity'
+}
 
-transport_mark_dispatched
-set +e
-created=$("$cmux_bin" new-surface --workspace "$workspace" --pane "$caller_pane" \
-  --type terminal --working-directory "$transport_artifact_dir" --focus true --json)
-create_status=$?
-set -e
-[[ $create_status == 0 ]] || transport_preserve_fail 'surface creation failed' "$create_status"
-surface=$("$jq_bin" -er '.surface_ref | select(type == "string" and length > 0)' <<< "$created") || \
-  transport_preserve_fail 'surface creation returned no identity'
-[[ $surface != "$caller_surface" ]] || transport_preserve_fail 'surface creation returned the caller surface'
-transport_residue="; possible surface: $surface"
+invocation_host_dispatch() {
+  local created create_status capsule_command
+  invocation_residue='; operation: new-surface'
+  created=$("$cmux_bin" new-surface --workspace "$workspace" --pane "$caller_pane" \
+    --type terminal --working-directory "$invocation_artifact_dir" --focus true --json 2>/dev/null)
+  create_status=$?
+  [[ $create_status == 0 ]] || return "$create_status"
+  surface=$("$jq_bin" -er '.surface_ref | select(type == "string" and length > 0)' <<< "$created") || return 1
+  [[ $surface != "$caller_surface" ]] || return 1
+  invocation_residue="; operation: respawn-pane; possible surface: $surface"
+  printf -v capsule_command 'exec %q' "$invocation_capsule"
+  "$cmux_bin" respawn-pane --surface "$surface" --command "$capsule_command" >/dev/null 2>/dev/null
+}
 
-printf -v capsule_command 'exec %q' "$transport_capsule"
-"$cmux_bin" respawn-pane --surface "$surface" --command "$capsule_command" >/dev/null || \
-  transport_preserve_fail 'atomic command start failed'
+invocation_host_complete() {
+  local status
+  "$cmux_bin" close-surface --surface "$surface" >/dev/null 2>/dev/null || {
+    status=$?
+    invocation_residue="; operation: close-surface; possible surface: $surface"
+    invocation_preserve_fail "owned surface cleanup failed with status $status" "$status"
+  }
+  "$cmux_bin" focus-panel --workspace "$workspace" --panel "$caller_surface" >/dev/null 2>/dev/null || {
+    status=$?
+    invocation_residue="; operation: focus-panel; possible surface: $surface"
+    invocation_preserve_fail "caller surface restoration failed with status $status" "$status"
+  }
+}
 
-transport_receive
-"$cmux_bin" close-surface --surface "$surface" >/dev/null || \
-  transport_preserve_fail 'owned surface cleanup failed'
-"$cmux_bin" focus-panel --workspace "$workspace" --panel "$caller_surface" >/dev/null || \
-  transport_preserve_fail 'caller surface restoration failed'
-transport_deliver
+invocation_main "$@"

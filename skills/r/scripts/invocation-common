@@ -1,0 +1,213 @@
+#!/usr/bin/env bash
+
+# Private lifecycle sourced by each fixed review-* entry. Host selection and
+# host commands stay in the entry; result interpretation stays in the one
+# canonical validator executable.
+
+invocation_usage() {
+  printf 'usage: review-%s <file.md>\n' "$invocation_name" >&2
+  exit 2
+}
+
+invocation_path_mode() {
+  local mode
+  if mode=$(stat -f '%Lp' "$1" 2>/dev/null); then
+    printf '%s\n' "$mode"
+    return 0
+  fi
+  stat -c '%a' "$1" 2>/dev/null
+}
+
+invocation_canonical_file() {
+  local path=$1 parent target count=0
+  while [[ -L $path ]]; do
+    (( count += 1 ))
+    (( count <= 40 )) || return 1
+    target=$(readlink "$path") || return 1
+    if [[ $target == /* ]]; then
+      path=$target
+    else
+      parent=${path%/*}
+      [[ -n $parent ]] || parent=.
+      path=$parent/$target
+    fi
+  done
+  parent=${path%/*}
+  [[ -n $parent ]] || parent=/
+  parent=$(CDPATH= cd -- "$parent" && pwd -P) || return 1
+  if [[ $parent == / ]]; then
+    printf '/%s\n' "${path##*/}"
+  else
+    printf '%s/%s\n' "$parent" "${path##*/}"
+  fi
+}
+
+invocation_remove_empty() {
+  [[ ${invocation_created:-0} == 1 ]] || return 0
+  rm -f -- "$invocation_fifo" "$invocation_capsule" "$invocation_capture" \
+    "$invocation_trusted" 2>/dev/null || true
+  [[ ! -e $invocation_result && ! -L $invocation_result ]] || return 0
+  rmdir -- "$invocation_dir" 2>/dev/null || true
+}
+
+invocation_preflight_fail() {
+  invocation_remove_empty
+  printf 'review-%s: %s\n' "$invocation_name" "$1" >&2
+  exit "${2:-2}"
+}
+
+invocation_preserve_fail() {
+  printf 'review-%s: %s; recoverable scratch: %s%s\n' \
+    "$invocation_name" "$1" "$invocation_dir" "${invocation_residue:-}" >&2
+  exit "${2:-1}"
+}
+
+invocation_interrupted() {
+  if [[ ${invocation_dispatched:-0} == 0 ]]; then
+    invocation_remove_empty
+    printf 'review-%s: interrupted before launch\n' "$invocation_name" >&2
+  else
+    printf 'review-%s: interrupted; recoverable scratch: %s%s\n' \
+      "$invocation_name" "$invocation_dir" "${invocation_residue:-}" >&2
+  fi
+  exit 130
+}
+
+invocation_prepare_async() {
+  mkfifo "$invocation_fifo" || invocation_preflight_fail 'could not create completion FIFO'
+  chmod 600 "$invocation_fifo" || invocation_preflight_fail 'could not make completion FIFO private'
+  {
+    printf '#!/usr/bin/env bash\nset +e\numask 077\ninvocation_report_status() {\n  child_status=$1\n  trap - EXIT HUP INT TERM\n  printf '\''%%s\\n'\'' "$child_status" > %q\n  exit "$child_status"\n}\ntrap '\''invocation_report_status $?'\'' EXIT\ntrap '\''invocation_report_status 129'\'' HUP\ntrap '\''invocation_report_status 130'\'' INT\ntrap '\''invocation_report_status 143'\'' TERM\ncd -- %q\nchild_status=$?\nif [[ $child_status == 0 ]]; then\n' \
+      "$invocation_fifo" "$invocation_artifact_dir"
+    printf '  %q ' "$invocation_tui" --actor person:reviewer \
+      --result "$invocation_result" "$invocation_artifact"
+    printf '\n  child_status=$?\nfi\nexit "$child_status"\n'
+  } > "$invocation_capsule" || invocation_preflight_fail 'could not create child capsule'
+  chmod 700 "$invocation_capsule" || invocation_preflight_fail 'could not make child capsule private'
+}
+
+invocation_receive_async() {
+  local child_status
+  IFS= read -r child_status < "$invocation_fifo" || \
+    invocation_preserve_fail 'completion FIFO closed without a status'
+  [[ $child_status =~ ^[0-9]+$ && $child_status -le 255 ]] || \
+    invocation_preserve_fail 'completion status is malformed'
+  [[ $child_status == 0 ]] || \
+    invocation_preserve_fail "Subspace exited with status $child_status" "$child_status"
+}
+
+invocation_wait_for_result() {
+  local count
+  for ((count = 0; count < 250; count += 1)); do
+    if [[ -e $invocation_result || -L $invocation_result ]]; then
+      return 0
+    fi
+    sleep 0.02
+  done
+  invocation_preserve_fail 'terminal returned before publishing a result'
+}
+
+invocation_main() {
+  [[ $# == 1 ]] || invocation_usage
+  local supplied=$1 found version version_status revision_status dispatch_status scratch
+  invocation_created=0
+  invocation_dispatched=0
+  invocation_residue=
+
+  [[ $supplied == /* ]] || invocation_preflight_fail 'Artifact path must be absolute'
+  [[ -f $supplied && ! -L $supplied && -r $supplied ]] || \
+    invocation_preflight_fail "Artifact is not a readable regular file: $supplied"
+  invocation_artifact_dir=${supplied%/*}
+  [[ -n $invocation_artifact_dir ]] || invocation_artifact_dir=/
+  [[ -d $invocation_artifact_dir && -x $invocation_artifact_dir ]] || \
+    invocation_preflight_fail "Artifact parent is not searchable: $invocation_artifact_dir"
+  invocation_artifact=$(invocation_canonical_file "$supplied") || \
+    invocation_preflight_fail 'could not canonicalize the Artifact path'
+  [[ $invocation_artifact == "$supplied" ]] || \
+    invocation_preflight_fail "Artifact path is not clean and canonical: $supplied"
+  invocation_revision=$(shasum -a 256 "$invocation_artifact" 2>/dev/null) || \
+    invocation_preflight_fail 'could not pin the Artifact revision'
+  invocation_revision=sha256:${invocation_revision%% *}
+  [[ $invocation_revision =~ ^sha256:[0-9a-f]{64}$ ]] || \
+    invocation_preflight_fail 'Artifact revision is malformed'
+
+  found=$(command -v subspace-tui 2>/dev/null) || \
+    invocation_preflight_fail 'subspace-tui is unavailable; install spacedock-dev/tap/subspace-beta' 127
+  [[ $found == /* ]] || invocation_preflight_fail 'subspace-tui did not resolve to an absolute path'
+  invocation_tui=$(invocation_canonical_file "$found") || \
+    invocation_preflight_fail 'could not resolve the exact subspace-tui target'
+  [[ -f $invocation_tui && ! -L $invocation_tui && -x $invocation_tui ]] || \
+    invocation_preflight_fail 'subspace-tui target is not an executable regular file'
+  set +e
+  version=$("$invocation_tui" --version; version_status=$?; printf '\034'; exit "$version_status")
+  version_status=$?
+  set -e
+  [[ $version_status == 0 && $version == $'0.10.0-beta.3\n\034' ]] || \
+    invocation_preflight_fail 'subspace-tui must be exactly 0.10.0-beta.3; upgrade spacedock-dev/tap/subspace-beta'
+  [[ -f $script_dir/validate-one-file-result && -x $script_dir/validate-one-file-result ]] || \
+    invocation_preflight_fail 'canonical result validator is unavailable'
+
+  invocation_host_preflight
+
+  umask 077
+  scratch=$(mktemp -d "${TMPDIR:-/tmp}/subspace-r.XXXXXX") || \
+    invocation_preflight_fail 'could not create private invocation scratch'
+  invocation_dir=$(CDPATH= cd -- "$scratch" && pwd -P) || {
+    rmdir -- "$scratch" 2>/dev/null || true
+    invocation_preflight_fail 'could not canonicalize private invocation scratch'
+  }
+  invocation_result=$invocation_dir/result.json
+  invocation_capture=$invocation_dir/capture.json
+  invocation_trusted=$invocation_dir/trusted.json
+  invocation_fifo=$invocation_dir/invocation-status.fifo
+  invocation_capsule=$invocation_dir/invocation-child
+  invocation_created=1
+  chmod 700 "$invocation_dir" || invocation_preflight_fail 'could not make invocation scratch private'
+  [[ $(invocation_path_mode "$invocation_dir" || true) == 700 ]] || \
+    invocation_preflight_fail 'invocation scratch is not mode 0700'
+  [[ ! -e $invocation_result && ! -L $invocation_result ]] || \
+    invocation_preflight_fail 'result path already exists'
+  if [[ ${invocation_async:-0} == 1 ]]; then
+    invocation_prepare_async
+  fi
+  trap invocation_interrupted HUP INT TERM
+
+  invocation_dispatched=1
+  set +e
+  invocation_host_dispatch
+  dispatch_status=$?
+  set -e
+  [[ $dispatch_status == 0 ]] || \
+    invocation_preserve_fail "selected host launch failed with status $dispatch_status" "$dispatch_status"
+  if [[ ${invocation_async:-0} == 1 ]]; then
+    invocation_receive_async
+  else
+    invocation_wait_for_result
+  fi
+  if declare -F invocation_host_complete >/dev/null; then
+    invocation_host_complete
+  fi
+  [[ -f $invocation_result && ! -L $invocation_result ]] || \
+    invocation_preserve_fail 'terminal returned no regular result'
+  [[ $(invocation_path_mode "$invocation_result" || true) == 600 ]] || \
+    invocation_preserve_fail 'terminal result is not mode 0600'
+  cat -- "$invocation_result" > "$invocation_capture" || \
+    invocation_preserve_fail 'could not capture the terminal result'
+
+  set +e
+  "$script_dir/validate-one-file-result" "$invocation_artifact" "$invocation_revision" "$invocation_result" "$invocation_capture" > "$invocation_trusted"
+  revision_status=$?
+  set -e
+  [[ $revision_status == 0 ]] || invocation_preserve_fail 'canonical result validation failed' "$revision_status"
+
+  set +e
+  cat -- "$invocation_trusted"
+  dispatch_status=$?
+  set -e
+  [[ $dispatch_status == 0 ]] || invocation_preserve_fail 'trusted result delivery failed' "$dispatch_status"
+  rm -f -- "$invocation_result" "$invocation_capture" "$invocation_trusted" \
+    "$invocation_fifo" "$invocation_capsule" || \
+    invocation_preserve_fail 'successful delivery could not clean invocation files'
+  rmdir -- "$invocation_dir" || invocation_preserve_fail 'successful delivery could not clean invocation directory'
+  trap - HUP INT TERM
+}

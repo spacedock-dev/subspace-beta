@@ -1,102 +1,51 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-usage() {
-  printf 'usage: review-zellij <absolute-file.md> <absolute-private-result.json> <validated-absolute-subspace-tui>\n' >&2
-  exit 2
-}
+invocation_name=zellij
+invocation_async=0
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck source=invocation-common
+source "$script_dir/invocation-common"
 
-[[ $# == 3 ]] || usage
-artifact=$1
-result=$2
-tui_bin=$3
-result_dir=${result%/*}
-artifact_dir=${artifact%/*}
-
-cleanup_empty() {
-  [[ ! -e $result ]] || return 0
-  rmdir -- "$result_dir" 2>/dev/null || true
-}
-
-path_mode() {
-  local mode
-  if mode=$(stat -f '%Lp' "$1" 2>/dev/null); then
-    printf '%s\n' "$mode"
-    return 0
+invocation_host_preflight() {
+  zellij_bin=${SUBSPACE_ZELLIJ_BIN:-zellij}
+  if [[ $zellij_bin != */* ]]; then
+    zellij_bin=$(command -v -- "$zellij_bin") || invocation_preflight_fail 'Zellij is not installed' 127
   fi
-  stat -c '%a' "$1" 2>/dev/null
+  [[ -x $zellij_bin && ! -d $zellij_bin ]] || invocation_preflight_fail "Zellij is not executable: $zellij_bin"
+  jq_bin=$(command -v jq) || invocation_preflight_fail 'jq is required to validate the Zellij pane inventory' 127
+  local inventory status
+  session=${ZELLIJ_SESSION_NAME:-}
+  pane=${ZELLIJ_PANE_ID:-}
+  [[ -n $session ]] || invocation_preflight_fail 'ZELLIJ_SESSION_NAME is required'
+  [[ $pane =~ ^[0-9]+$ ]] || invocation_preflight_fail 'numeric ZELLIJ_PANE_ID is required'
+  inventory=$("$zellij_bin" --session "$session" action list-panes --json --tab --state 2>/dev/null) || {
+    status=$?
+    invocation_preflight_fail "operation list-panes failed with status $status" "$status"
+  }
+  tab_id=$("$jq_bin" -er --argjson pane "$pane" '
+    def valid_row:
+      type == "object" and
+      (.id | type) == "number" and (.id | floor) == .id and
+      (.is_plugin | type) == "boolean" and
+      (.exited | type) == "boolean" and
+      (.tab_id | type) == "number" and (.tab_id | floor) == .tab_id and .tab_id >= 0;
+    if type != "array" or (all(.[]; valid_row) | not) then
+      error("invalid pane inventory")
+    else
+      [.[] | select(.id == $pane and .is_plugin == false and .exited == false)] |
+      if length == 1 then .[0].tab_id else error("caller pane is not uniquely live") end
+    end
+  ' <<< "$inventory") || invocation_preflight_fail "caller pane terminal_$pane is not uniquely live"
 }
 
-preflight_fail() {
-  cleanup_empty
-  printf 'review-zellij: %s\n' "$1" >&2
-  exit "${2:-2}"
+invocation_host_dispatch() {
+  invocation_residue='; operation: new-pane'
+  "$zellij_bin" --session "$session" action new-pane \
+    --blocking --floating --close-on-exit \
+    --tab-id "$tab_id" --cwd "$invocation_artifact_dir" -- \
+    "$invocation_tui" --actor person:reviewer --result "$invocation_result" "$invocation_artifact" \
+    >/dev/null 2>/dev/null
 }
 
-[[ $artifact == /* && $result == /* && $tui_bin == /* ]] || preflight_fail 'all paths must be absolute'
-[[ -f $artifact && ! -L $artifact && -r $artifact ]] || preflight_fail "Artifact is not a readable regular file: $artifact"
-[[ -d $artifact_dir && -x $artifact_dir ]] || preflight_fail "Artifact parent is not searchable: $artifact_dir"
-[[ -d $result_dir && ! -L $result_dir ]] || preflight_fail "private result directory is unavailable: $result_dir"
-[[ $(path_mode "$result_dir" || true) == 700 ]] || preflight_fail "private result directory must be mode 0700: $result_dir"
-[[ ! -e $result && ! -L $result ]] || preflight_fail "result path already exists: $result"
-
-zellij_bin=${SUBSPACE_ZELLIJ_BIN:-zellij}
-if [[ $zellij_bin != */* ]]; then
-  zellij_bin=$(command -v -- "$zellij_bin") || preflight_fail 'zellij is not installed' 127
-fi
-[[ -x $zellij_bin && ! -d $zellij_bin ]] || preflight_fail "Zellij is not executable: $zellij_bin"
-[[ -f $tui_bin && ! -L $tui_bin && -x $tui_bin ]] || preflight_fail "validated subspace-tui is not an executable regular file: $tui_bin"
-jq_bin=$(command -v jq) || preflight_fail 'jq is required to validate the Zellij pane inventory' 127
-
-version=$("$zellij_bin" --version) || preflight_fail 'could not read the Zellij version'
-[[ $version =~ ^zellij\ 0\.44\.[0-9]+$ ]] || preflight_fail "Zellij 0.44.x is required; found $version"
-session=${ZELLIJ_SESSION_NAME:-}
-pane=${ZELLIJ_PANE_ID:-}
-[[ -n $session ]] || preflight_fail 'ZELLIJ_SESSION_NAME is required'
-[[ $pane =~ ^[0-9]+$ ]] || preflight_fail 'numeric ZELLIJ_PANE_ID is required'
-
-inventory=$("$zellij_bin" --session "$session" action list-panes --json --tab --state) || \
-  preflight_fail 'could not list panes in the caller session'
-tab_id=$("$jq_bin" -er --argjson pane "$pane" '
-  def valid_row:
-    type == "object" and
-    (.id | type) == "number" and (.id | floor) == .id and
-    (.is_plugin | type) == "boolean" and
-    (.exited | type) == "boolean" and
-    (.tab_id | type) == "number" and (.tab_id | floor) == .tab_id and .tab_id >= 0;
-  if type != "array" or (all(.[]; valid_row) | not) then
-    error("invalid pane inventory")
-  else
-    [.[] | select(.id == $pane and .is_plugin == false and .exited == false)] |
-    if length == 1 then .[0].tab_id else error("caller pane is not uniquely live") end
-  end
-' <<< "$inventory") || preflight_fail "caller pane terminal_$pane is not uniquely live"
-
-set +e
-"$zellij_bin" --session "$session" action new-pane \
-  --blocking --floating --close-on-exit \
-  --tab-id "$tab_id" --cwd "$artifact_dir" -- \
-  "$tui_bin" --advisory --actor person:reviewer \
-  --approver agent:invoking-session --result "$result" "$artifact"
-launch_status=$?
-set -e
-if [[ $launch_status != 0 ]]; then
-  printf 'review-zellij: blocking float failed with status %s; recoverable scratch: %s\n' \
-    "$launch_status" "$result_dir" >&2
-  exit "$launch_status"
-fi
-
-if [[ ! -f $result || -L $result ]]; then
-  printf 'review-zellij: blocking float returned without a regular result; recoverable scratch: %s\n' \
-    "$result_dir" >&2
-  exit 1
-fi
-
-set +e
-cat -- "$result"
-delivery_status=$?
-set -e
-if [[ $delivery_status != 0 ]]; then
-  printf 'review-zellij: result delivery failed; recoverable scratch: %s\n' "$result_dir" >&2
-  exit "$delivery_status"
-fi
+invocation_main "$@"
